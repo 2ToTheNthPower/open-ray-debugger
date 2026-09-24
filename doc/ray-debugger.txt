@@ -1,0 +1,126 @@
+*ray-debugger.nvim*         Attach Neovim to paused Ray tasks
+
+==============================================================================
+INTRODUCTION                                            *ray-debugger*
+
+ray-debugger.nvim is an open source frontend for the Ray distributed
+debugger.  It lists tasks and actors that are paused on `breakpoint()` (or on
+an unhandled exception with post-mortem debugging) and attaches |nvim-dap| to
+the debugger port the Ray worker publishes in its cluster state.
+
+No Node.js or npm is involved: the plugin is Lua, uses `curl` for the Ray
+dashboard REST API and nvim-dap for the Debug Adapter Protocol connection.
+
+==============================================================================
+REQUIREMENTS                                        *ray-debugger-requirements*
+
+- Neovim 0.10 or newer (a synchronous fallback exists for older versions)
+- nvim-dap (https://github.com/mfussenegger/nvim-dap)
+- curl
+- Ray >= 2.9 on the cluster with `debugpy >= 1.8` installed
+- The modern debugger mode: `RAY_DEBUG` must not be set to `legacy`
+
+==============================================================================
+SETUP                                                   *ray-debugger-setup*
+
+>lua
+    require("ray-debugger").setup({
+      dashboard_url = "http://127.0.0.1:8265",
+      poll_interval_ms = 3000,
+      notify_on_new = true,
+    })
+<
+With lazy.nvim/LazyVim:
+
+>lua
+    {
+      "you/ray-debugger.nvim",
+      dependencies = { "mfussenegger/nvim-dap" },
+      keys = {
+        { "<leader>dr", function() require("ray-debugger").pick() end,
+          desc = "Ray: Attach to paused task" },
+      },
+      opts = { dashboard_url = "http://127.0.0.1:8265" },
+    }
+<
+
+==============================================================================
+USAGE                                                   *ray-debugger-usage*
+
+1. Put `breakpoint()` in a Ray task or actor method and run the application.
+2. Run |:RayDebug| and pick the paused task from the list.
+3. Debug with the usual nvim-dap commands.  Disconnect to let the task resume.
+
+Post-mortem debugging: set `RAY_DEBUG_POST_MORTEM=1` in the cluster runtime
+environment; failing tasks are frozen instead of failing so you can inspect
+them.
+
+==============================================================================
+COMMANDS                                             *ray-debugger-commands*
+
+:RayDebug
+        List paused tasks in all configured clusters and attach to the
+        selected one.
+
+:RayDebugAttach {target}                            *:RayDebugAttach*
+        Attach directly.  {target} may be `host:port`, a worker id, or a
+        task id (prefix).
+
+:RayDebugRefresh                                    *:RayDebugRefresh*
+        Refresh the cached paused task list.
+
+:checkhealth ray-debugger                           *:checkhealth-ray-debugger*
+        Diagnose `curl`, nvim-dap, the debugger mode, and cluster
+        reachability.
+
+==============================================================================
+CONFIGURATION                                   *ray-debugger-configuration*
+
+`setup()` accepts:
+
+dashboard_url           string   Dashboard URL used when `clusters` is unset.
+                                 Default: "http://127.0.0.1:8265"
+clusters                table    List of clusters: { name, url, dap_host?,
+                                 headers? }.  Overrides `dashboard_url`.
+request_timeout_ms      integer  HTTP timeout.  Default: 5000
+poll_interval_ms        integer  Background refresh interval, 0 disables.
+                                 Default: 0
+notify_on_new           boolean  Notify when new paused tasks appear while
+                                 polling.  Default: false
+picker                  function Custom picker: `fun(entries, on_choice)`.
+                                 Default: |vim.ui.select|
+attach.just_my_code     boolean  Passed to debugpy.  Default: false
+attach.path_mappings    table    DAP `pathMappings`, e.g.
+                                 `{ { localRoot = "/local", remoteRoot = "/remote" } }`
+attach.extra_args       table    Extra arguments for every attach request.
+attach.disconnect_timeout_sec
+                        integer  Disconnect timeout.  Default: 3
+
+==============================================================================
+API                                                     *ray-debugger-api*
+
+require("ray-debugger").setup({...})
+require("ray-debugger").pick()
+require("ray-debugger").refresh(function(err, entries, warnings) end)
+require("ray-debugger").attach(entry)
+require("ray-debugger").attach_address("host:port")
+require("ray-debugger").paused_count()
+require("ray-debugger").status()      -- statusline component, e.g. "⏸ 2"
+
+==============================================================================
+TROUBLESHOOTING                             *ray-debugger-troubleshooting*
+
+Run |:checkhealth-ray-debugger| first.
+
+- "no paused Ray tasks found": the task has not reached `breakpoint()` yet,
+  it already resumed, or the cluster uses `RAY_DEBUG=legacy`.
+- Connection errors: the dashboard is not reachable; check `dashboard_url`.
+- Attach hangs: the worker's debugger port is not reachable from your machine.
+  Forward it (SSH tunnel or `kubectl port-forward`) and set `dap_host`.
+
+==============================================================================
+LICENSE                                             *ray-debugger-license*
+
+Apache-2.0.
+
+vim:tw=78:ts=8:noet:ft=help:norl:

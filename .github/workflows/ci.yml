@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: v0.10.4
+
+      - name: Clone nvim-dap (for the integration tests)
+        run: git clone --depth=1 https://github.com/mfussenegger/nvim-dap.git /tmp/nvim-dap
+
+      - name: Unit and protocol tests
+        run: make test NVIM_DAP_PATH=/tmp/nvim-dap
+
+      - name: Install debugpy
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install debugpy
+
+      - name: End-to-end test against real debugpy
+        run: make test-integration NVIM_DAP_PATH=/tmp/nvim-dap
+
+      - name: Lint
+        uses: JohnnyMorganz/stylua-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: latest
+          args: --check lua plugin tests

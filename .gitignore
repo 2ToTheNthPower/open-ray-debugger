@@ -1,0 +1,4 @@
+stylua.toml
+*.log
+.deps/
+tmp/
