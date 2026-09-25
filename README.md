@@ -47,7 +47,7 @@ Ray ships a distributed debugger in the open source Ray package
 `debugpy.listen()` starts the DAP adapter inside the cluster, so attaching is a
 plain DAP connection — no extra adapter process or IDE-specific glue is needed.
 
-See [docs/protocol.md](docs/protocol.md) for the full protocol details,
+See [doc/protocol.md](doc/protocol.md) for the full protocol details,
 including the exact Ray source files involved.
 
 ## Requirements
@@ -138,6 +138,10 @@ See [doc/ray-debugger.txt](doc/ray-debugger.txt) for `:help ray-debugger`.
 
    print(ray.get(compute.remote(6)))
    ```
+
+   Ready-to-run versions live in [examples/](examples/):
+   `ray_breakpoint_demo.py` (a single pause, plus a `post-mortem` mode) and
+   `ray_two_tasks_demo.py` (two tasks paused at once, to try the picker).
 
 3. Run the application. The task pauses and the worker starts waiting.
 
