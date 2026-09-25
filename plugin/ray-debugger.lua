@@ -32,6 +32,33 @@ end, {
   desc = "Ray debugger: attach to <host:port | worker-id | task-id>",
 })
 
+vim.api.nvim_create_user_command("RayDebugPostMortem", function()
+  ray().post_mortem()
+end, {
+  desc = "Ray debugger: show the post-mortem traceback and locals of the current session",
+})
+
+vim.api.nvim_create_user_command("RayDebugWatch", function(opts)
+  local arg = opts.args
+  local enable
+  if arg == "on" then
+    enable = true
+  elseif arg == "off" then
+    enable = false
+  end
+  local watching = ray().watch(enable)
+  require("ray-debugger.util").notify(
+    watching and "watching for paused tasks" or "stopped watching for paused tasks",
+    vim.log.levels.INFO
+  )
+end, {
+  nargs = "?",
+  complete = function()
+    return { "on", "off" }
+  end,
+  desc = "Ray debugger: notify when tasks pause (toggle, or on/off)",
+})
+
 vim.api.nvim_create_user_command("RayDebugRefresh", function()
   local ray_debugger = ray()
   ray_debugger.refresh(function(err, entries)

@@ -138,6 +138,103 @@ describe("dap module", function()
     assert_eq(0, session.moves)
   end)
 
+  it("maps working_dir tasks to the local project (remoteRoot = '.')", function()
+    local args = rdap.run_config({
+      host = "h",
+      port = 1,
+      label = "x",
+      working_dir = "gcs://_ray_pkg_abc.zip",
+    }, {
+      path_mappings = { { localRoot = "/a", remoteRoot = "/b" } },
+      working_dir = { local_root = "/tmp/my-project/" },
+    })
+    assert_eq({ localRoot = "/a", remoteRoot = "/b" }, args.pathMappings[1])
+    assert_eq({ localRoot = "/tmp/my-project", remoteRoot = "." }, args.pathMappings[2])
+  end)
+
+  it("defaults the working_dir local root to Neovim's cwd", function()
+    local args =
+      rdap.run_config({ host = "h", port = 1, label = "x", working_dir = "gcs://_ray_pkg_abc.zip" })
+    local cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"):gsub("/$", "")
+    assert_eq({ { localRoot = cwd, remoteRoot = "." } }, args.pathMappings)
+  end)
+
+  it("resolves a working_dir local root function per entry", function()
+    local args = rdap.run_config(
+      { host = "h", port = 1, label = "x", working_dir = "gcs://pkg.zip", job_id = "02" },
+      {
+        working_dir = {
+          local_root = function(entry)
+            return "/jobs/" .. entry.job_id
+          end,
+        },
+      }
+    )
+    assert_eq("/jobs/02", args.pathMappings[1].localRoot)
+  end)
+
+  it("skips the working_dir mapping when disabled or not needed", function()
+    local disabled = rdap.run_config(
+      { host = "h", port = 1, label = "x", working_dir = "gcs://pkg.zip" },
+      { working_dir = { enabled = false } }
+    )
+    assert_eq(nil, disabled.pathMappings)
+    local plain = rdap.run_config({ host = "h", port = 1, label = "x" })
+    assert_eq(nil, plain.pathMappings)
+  end)
+
+  it("suppresses exceptionInfo for Ray's broken post-mortem stack", function()
+    local session =
+      { config = { type = "ray" }, capabilities = { supportsExceptionInfoRequest = true } }
+    rdap._before_stack_trace(session, nil, {
+      stackFrames = { { name = "helper" }, { name = "_debugpy_excepthook" } },
+    })
+    assert_eq(false, session.capabilities.supportsExceptionInfoRequest)
+
+    local healthy =
+      { config = { type = "ray" }, capabilities = { supportsExceptionInfoRequest = true } }
+    rdap._before_stack_trace(healthy, nil, { stackFrames = { { name = "explode" } } })
+    assert_eq(true, healthy.capabilities.supportsExceptionInfoRequest)
+
+    local other =
+      { config = { type = "python" }, capabilities = { supportsExceptionInfoRequest = true } }
+    rdap._before_stack_trace(other, nil, { stackFrames = { { name = "_debugpy_excepthook" } } })
+    assert_eq(true, other.capabilities.supportsExceptionInfoRequest)
+  end)
+
+  it("runs post-mortem recovery on exception stops with Ray's excepthook frame", function()
+    local post_mortem = require("ray-debugger.post_mortem")
+    local real_run = post_mortem.run
+    local ran_with
+    post_mortem.run = function(_, frame)
+      ran_with = frame
+    end
+
+    local session = fake_session({
+      { id = 1, name = "helper", source = { path = "/usr/lib/python3.12/contextlib.py" } },
+      {
+        id = 2,
+        name = "_debugpy_excepthook",
+        source = { path = "/venv/site-packages/ray/util/debugpy.py" },
+      },
+    })
+    rdap._on_stopped(session, { reason = "exception", threadId = 1 })
+    post_mortem.run = real_run
+
+    assert_eq(2, ran_with.id)
+    -- exception stops never move frames
+    assert_eq(0, session.moves)
+  end)
+
+  it("does not move when every frame is plumbing", function()
+    local session = fake_session({
+      { id = 1, source = { path = "/venv/site-packages/ray/util/rpdb.py" } },
+      { id = 2, source = { path = "/venv/site-packages/ray/util/debugpy.py" } },
+    })
+    rdap._on_stopped(session, { reason = "breakpoint", threadId = 1 })
+    assert_eq(0, session.moves)
+  end)
+
   -- Restore the environment for the specs that follow.
   package.loaded["dap"] = real_dap
   package.loaded["ray-debugger.dap"] = nil

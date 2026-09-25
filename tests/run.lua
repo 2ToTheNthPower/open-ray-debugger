@@ -119,7 +119,9 @@ local specs = {
   "tests/config_spec.lua",
   "tests/state_spec.lua",
   "tests/dap_spec.lua",
+  "tests/post_mortem_spec.lua",
   "tests/init_spec.lua",
+  "tests/plugin_spec.lua",
   "tests/nvim_dap_spec.lua",
   "tests/debugpy_spec.lua",
 }

@@ -22,6 +22,7 @@ local INTERNAL_FRAME_PATTERNS = {
   "/ray/util/debugpy%.py$",
   "/ray/_private/worker%.py$",
   "/ray/_private/workers/default_worker%.py$",
+  "/ray/_raylet%.pyx$",
   "/_pydevd_bundle/",
   "/_pydev_bundle/",
   "/pydevd%.py$",
@@ -61,30 +62,25 @@ local function move_up(session)
   return false
 end
 
----Select the first user frame when a Ray task stops in Ray/debugger plumbing.
----Only applies to sessions started by this plugin and to breakpoint stops, so
----deliberate stepping into library code is not disturbed.
 ---@param session table
----@param body table|nil
-function M._on_stopped(session, body)
-  if config.options.attach.skip_internal_frames == false then
-    return
-  end
-  if not session.config or session.config.type ~= M.adapter_name then
-    return
-  end
-  if body and body.reason and body.reason ~= "breakpoint" then
-    return
-  end
+---@return boolean
+local function is_ray_session(session)
+  return type(session) == "table"
+    and type(session.config) == "table"
+    and session.config.type == M.adapter_name
+end
 
-  local thread_id = body and body.threadId
+---Run `fn(frames)` once nvim-dap has fetched the stack of the stopped thread.
+---nvim-dap requests `stackTrace` asynchronously after the `stopped` event.
+---@param session table
+---@param thread_id integer|nil
+---@param fn fun(frames: table[])
+local function with_frames(session, thread_id, fn)
   local attempts = 0
-
   local function attempt()
     if session.closed then
       return
     end
-
     local thread = thread_id and session.threads and session.threads[thread_id]
     local frames = thread and thread.frames
     if (not frames or #frames == 0) and attempts < 50 then
@@ -92,30 +88,93 @@ function M._on_stopped(session, body)
       vim.defer_fn(attempt, 20)
       return
     end
-    frames = frames or {}
+    fn(frames or {})
+  end
+  attempt()
+end
 
-    local hops = 0
-    for _, frame in ipairs(frames) do
-      if M.is_internal_frame(frame) then
-        hops = hops + 1
-      else
-        break
-      end
-    end
-
-    for _ = 1, hops do
-      local before = session.current_frame and session.current_frame.id
-      if not move_up(session) then
-        return
-      end
-      local after = session.current_frame and session.current_frame.id
-      if after == nil or after == before then
-        return
-      end
+---Move from Ray/debugger plumbing frames to the first user frame.
+---@param session table
+---@param frames table[]
+local function skip_internal_frames(session, frames)
+  local hops = 0
+  for _, frame in ipairs(frames) do
+    if M.is_internal_frame(frame) then
+      hops = hops + 1
+    else
+      break
     end
   end
+  -- Nothing but plumbing (e.g. a broken post-mortem stack): stay put.
+  if hops == 0 or hops == #frames then
+    return
+  end
+  for _ = 1, hops do
+    local before = session.current_frame and session.current_frame.id
+    if not move_up(session) then
+      return
+    end
+    local after = session.current_frame and session.current_frame.id
+    if after == nil or after == before then
+      return
+    end
+  end
+end
 
-  attempt()
+---Handle `stopped` events of sessions started by this plugin.
+---
+---* breakpoint stops: Ray suspends its own `set_trace` helper frame, so select
+---  the first user frame (`attach.skip_internal_frames`).
+---* exception stops: recover the traceback when debugpy reports Ray's
+---  excepthook stack instead of the failing frames (`post_mortem`).
+---
+---Step stops are left alone so deliberately stepping into library code works.
+---@param session table
+---@param body table|nil
+function M._on_stopped(session, body)
+  if not is_ray_session(session) then
+    return
+  end
+  local reason = body and body.reason
+  local skip = config.options.attach.skip_internal_frames ~= false
+    and (reason == nil or reason == "breakpoint")
+  local recover = config.options.post_mortem.enabled ~= false and reason == "exception"
+  if not skip and not recover then
+    return
+  end
+
+  with_frames(session, body and body.threadId, function(frames)
+    if skip then
+      skip_internal_frames(session, frames)
+    end
+    if recover then
+      local post_mortem = require("ray-debugger.post_mortem")
+      local hook_frame = post_mortem.find_hook_frame(frames)
+      if hook_frame then
+        post_mortem.run(session, hook_frame)
+      end
+    end
+  end)
+end
+
+---Before nvim-dap handles a stack trace: if it is Ray's excepthook stack (the
+---debugpy >= 1.8.6 post-mortem case), stop nvim-dap from sending
+---`exceptionInfo`, which debugpy fails with an internal error in that state.
+---The post-mortem recovery reports the exception instead.
+---@param session table
+---@param err any
+---@param response table|nil
+function M._before_stack_trace(session, err, response)
+  if err or type(response) ~= "table" or not is_ray_session(session) then
+    return
+  end
+  if config.options.post_mortem.enabled == false then
+    return
+  end
+  if require("ray-debugger.post_mortem").find_hook_frame(response.stackFrames) then
+    session.capabilities = session.capabilities or {}
+    session.capabilities.supportsExceptionInfoRequest = false
+  end
 end
 
 ---Register the adapter with nvim-dap. Idempotent.
@@ -152,8 +211,13 @@ function M.setup_adapter()
     end
   end
 
-  if dap.listeners and dap.listeners.after and dap.listeners.after.event_stopped then
-    dap.listeners.after.event_stopped["ray-debugger"] = M._on_stopped
+  if dap.listeners then
+    if dap.listeners.after and dap.listeners.after.event_stopped then
+      dap.listeners.after.event_stopped["ray-debugger"] = M._on_stopped
+    end
+    if dap.listeners.before and dap.listeners.before.stackTrace then
+      dap.listeners.before.stackTrace["ray-debugger"] = M._before_stack_trace
+    end
   end
 
   return dap
@@ -178,8 +242,31 @@ function M.run_config(entry, opts)
   if opts.just_my_code ~= nil then
     args.justMyCode = opts.just_my_code
   end
-  if opts.path_mappings and #opts.path_mappings > 0 then
-    args.pathMappings = opts.path_mappings
+
+  local mappings = {}
+  for _, mapping in ipairs(opts.path_mappings or {}) do
+    mappings[#mappings + 1] = mapping
+  end
+  -- Tasks shipped with `runtime_env={"working_dir": ...}` (and every Ray Job)
+  -- run from an unpacked copy of the directory, and Ray sets the worker's cwd
+  -- to it. debugpy resolves `remoteRoot = "."` to the debuggee's cwd, so this
+  -- maps those files back to the local project.
+  local working_dir = opts.working_dir or {}
+  if entry.working_dir and working_dir.enabled ~= false then
+    local local_root = working_dir.local_root
+    if type(local_root) == "function" then
+      local_root = local_root(entry)
+    end
+    if local_root == nil then
+      local_root = vim.fn.getcwd()
+    end
+    if type(local_root) == "string" and local_root ~= "" then
+      local_root = vim.fn.fnamemodify(local_root, ":p"):gsub("[/\\]+$", "")
+      mappings[#mappings + 1] = { localRoot = local_root, remoteRoot = "." }
+    end
+  end
+  if #mappings > 0 then
+    args.pathMappings = mappings
   end
   if opts.extra_args then
     args = vim.tbl_deep_extend("force", args, opts.extra_args)

@@ -151,6 +151,53 @@ describe("state discovery", function()
     assert_eq(3333, entries[1].port)
   end)
 
+  it("extracts the working_dir of Ray Job tasks and tolerates JSON nulls", function()
+    local mock = dashboard.start({
+      ["/api/v0/workers"] = function()
+        -- raw JSON so `null` values arrive exactly like Ray sends them
+        return {
+          body = [[{"result": true, "msg": "", "data": {"result": {"total": 2, "result": [
+            {"worker_id": "idle", "is_alive": true, "ip": "10.0.0.1", "debugger_port": null, "num_paused_threads": null},
+            {"worker_id": "w1", "is_alive": true, "ip": "10.0.0.1", "pid": 7, "debugger_port": 4040, "num_paused_threads": 1}
+          ]}}}]],
+        }
+      end,
+      ["/api/v0/tasks"] = function()
+        return {
+          body = [[{"result": true, "msg": "", "data": {"result": {"total": 1, "result": [
+            {"task_id": "t1", "worker_id": "w1", "state": "RUNNING", "name": "double",
+             "func_or_class_name": "double", "actor_id": null, "error_type": null,
+             "is_debugger_paused": null, "start_time_ms": 5,
+             "runtime_env_info": {"serialized_runtime_env": "{\"working_dir\": \"gcs://_ray_pkg_abc.zip\"}"}}
+          ]}}}]],
+        }
+      end,
+    })
+
+    local err, entries = run_paused({ { name = "test", url = mock.url } })
+    mock.stop()
+
+    assert_eq(nil, err)
+    assert_eq(1, #entries)
+    assert_eq("gcs://_ray_pkg_abc.zip", entries[1].working_dir)
+    assert_eq(nil, entries[1].is_debugger_paused)
+    assert_eq(nil, entries[1].actor_id)
+    assert_eq(nil, entries[1].error_type)
+    assert_eq("[test] double RUNNING @ 10.0.0.1:4040", entries[1].label)
+  end)
+
+  it("ignores malformed runtime env payloads", function()
+    assert_eq(nil, state.runtime_env_working_dir(nil))
+    assert_eq(
+      nil,
+      state.runtime_env_working_dir({ runtime_env_info = { serialized_runtime_env = "{" } })
+    )
+    assert_eq(
+      nil,
+      state.runtime_env_working_dir({ runtime_env_info = { serialized_runtime_env = "{}" } })
+    )
+  end)
+
   it("prefers tasks that are explicitly paused by the debugger", function()
     local task = state.pick_task({
       { task_id = "running", state = "RUNNING", start_time_ms = 100 },

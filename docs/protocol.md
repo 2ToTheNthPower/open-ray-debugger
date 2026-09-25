@@ -136,6 +136,45 @@ its own `set_trace` helper (`pydevd.settrace(stop_at_frame=...)` in
 leading frames are Ray/debugpy plumbing and selects the first user frame
 automatically (`attach.skip_internal_frames`).
 
+## 4. Ray Jobs and `working_dir`
+
+Tasks with `runtime_env={"working_dir": ...}` (and every Ray Job) run from an
+unpacked copy: `<ray temp dir>/session_*/runtime_resources/working_dir_files/_ray_pkg_<hash>/`.
+Ray sets the worker's cwd to that directory, and the task's runtime env is
+visible in the State API (`TaskState.runtime_env_info.serialized_runtime_env`,
+a JSON string with `"working_dir": "gcs://_ray_pkg_<hash>.zip"`).
+
+debugpy resolves `remoteRoot = "."` in `pathMappings` to the debuggee's cwd
+(`pydevd_process_net_command_json.py:_resolve_remote_root`), so for such tasks
+the plugin adds `{ localRoot = <local project>, remoteRoot = "." }`. That maps
+stack frames to local files and local breakpoints to the cluster copy.
+
+## 5. Post-mortem and debugpy >= 1.8.6
+
+In post-mortem mode Ray calls `pydevd.stop_on_unhandled_exception` from
+`ray/util/debugpy.py:_debugpy_excepthook`, which runs after the task frame has
+unwound (the call comes from Cython in `_raylet.pyx`). debugpy 1.8.0–1.8.5
+report the traceback frames. From debugpy 1.8.6 on (still the case in 1.8.22),
+the reported stack is the *current* Python stack (`contextlib` helper, Ray's
+excepthook, worker loop), and the `exceptionInfo` request fails with
+`AttributeError: 'NoneType' object has no attribute '__qualname__'`. The same
+happens with a plain-Python reproduction
+(`tests/integration/ray_post_mortem_debuggee.py`), so it's a debugpy regression
+rather than a Ray-specific one.
+
+The plugin works around it:
+
+* In a `before.stackTrace` listener, if the stack contains
+  `_debugpy_excepthook`, it clears `supportsExceptionInfoRequest` for that
+  session, so nvim-dap doesn't show the internal error.
+* On the `exception` stop it evaluates an expression in the hook frame, where
+  `error = sys.exc_info()`, that returns the traceback frames (file, line,
+  function, `reprlib` reprs of the locals) and the worker cwd as JSON. debugpy
+  returns the value as a Python `repr`, which the plugin unescapes.
+* It puts the traceback in the quickfix list (applying the same path
+  mappings), jumps to the innermost user frame, prints the locals in the
+  REPL, and selects the hook frame so REPL expressions can use `error`.
+
 ## References
 
 * Ray debugger user guide: <https://docs.ray.io/en/latest/ray-observability/ray-distributed-debugger.html>

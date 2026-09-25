@@ -17,8 +17,17 @@ local M = {}
 ---  used to translate paths between the local machine and the cluster.
 ---@field skip_internal_frames? boolean When Ray's `breakpoint()` suspends a
 ---  frame inside Ray/debugpy plumbing, select the first user frame instead.
+---@field working_dir? { enabled?: boolean, local_root?: string|fun(entry: RayDebuggerEntry): string|nil }
+---  Map files of tasks that run from a `working_dir` runtime env (every Ray Job)
+---  to `local_root` (default: Neovim's cwd).
 ---@field extra_args? table Extra arguments merged into every DAP `attach` request.
 ---@field disconnect_timeout_sec? number How long to wait for the adapter to disconnect.
+
+---@class RayDebuggerPostMortemOptions
+---@field enabled? boolean Recover the traceback when debugpy reports Ray's excepthook stack.
+---@field quickfix? boolean Put the recovered traceback in the quickfix list.
+---@field repl? boolean Print the exception and the failing frame's locals in the DAP REPL.
+---@field jump? boolean Jump to the failing line.
 
 ---@class RayDebuggerConfig
 ---@field dashboard_url string Dashboard URL used when `clusters` is not set.
@@ -29,6 +38,7 @@ local M = {}
 ---@field picker? fun(entries: RayDebuggerEntry[], on_choice: fun(entry?: RayDebuggerEntry))
 ---  Custom picker. Defaults to `vim.ui.select`.
 ---@field attach RayDebuggerAttachOptions
+---@field post_mortem RayDebuggerPostMortemOptions
 
 ---@type RayDebuggerConfig
 M.defaults = {
@@ -42,8 +52,18 @@ M.defaults = {
     just_my_code = false,
     path_mappings = nil,
     skip_internal_frames = true,
+    working_dir = {
+      enabled = true,
+      local_root = nil,
+    },
     extra_args = {},
     disconnect_timeout_sec = 3,
+  },
+  post_mortem = {
+    enabled = true,
+    quickfix = true,
+    repl = true,
+    jump = true,
   },
 }
 

@@ -70,9 +70,10 @@ return {
   {
     "you/ray-debugger.nvim", -- or `dir = "/path/to/open-ray-debugger"` for a local checkout
     dependencies = { "mfussenegger/nvim-dap" },
+    -- Chosen to not clash with LazyVim's DAP keys (<leader>dr is "Toggle REPL").
     keys = {
-      { "<leader>dr", function() require("ray-debugger").pick() end, desc = "Ray: Attach to paused task" },
-      { "<leader>dR", function() require("ray-debugger").refresh() end, desc = "Ray: Refresh paused tasks" },
+      { "<leader>dR", function() require("ray-debugger").pick() end, desc = "Ray: Attach to paused task" },
+      { "<leader>dW", function() require("ray-debugger").watch() end, desc = "Ray: Toggle watch" },
     },
     opts = {
       dashboard_url = "http://127.0.0.1:8265",
@@ -137,6 +138,25 @@ require("ray-debugger").setup({
    resume and join another paused task later. You can keep breakpoints set;
    attaching again to the same or a different task works the same way.
 
+### Breakpoints (`<leader>db` and friends)
+
+Breakpoints are plain nvim-dap breakpoints, so LazyVim's DAP keys work as
+usual: `<leader>db` toggles a breakpoint, `<leader>dB` sets a conditional one,
+`<leader>dc` continues, `<leader>dO`/`<leader>di`/`<leader>do` step.
+
+* You can set them **before or after attaching**: breakpoints already set
+  are sent to the worker when you attach, and new ones apply immediately.
+* Once attached, they hit for any code the worker runs, including later tasks
+  or actor calls on the same worker.
+* For Ray Jobs / `working_dir` tasks, breakpoints set in your *local* files hit
+  on the cluster's copy (see [Ray Jobs and `working_dir`](#ray-jobs-and-working_dir)).
+
+One caveat, inherent to how Ray's debugger works: a worker only starts its
+debug server when it reaches `breakpoint()` (or a post-mortem exception). A
+`<leader>db` breakpoint alone can't pause a task that isn't already attached.
+Use `breakpoint()` as the entry point, then use `<leader>db` breakpoints from
+there.
+
 ### Post-mortem debugging
 
 Set `RAY_DEBUG_POST_MORTEM=1` in the runtime environment and Ray freezes a task
@@ -152,7 +172,44 @@ def explode():
     raise ValueError("boom")  # the task freezes here for you to inspect
 ```
 
-The frozen task shows up in `:RayDebug` with its error type.
+The frozen task shows up in `:RayDebug`; attach to it like any paused task.
+
+> **debugpy ≥ 1.8.6 regression.** With debugpy 1.8.0–1.8.5 the debugger stops
+> in the failing frame. Since debugpy 1.8.6, the way Ray hands the exception
+> to debugpy produces the *current* stack (Ray's worker loop) instead of the
+> traceback, and debugpy's `exceptionInfo` request fails, so the failing frame
+> is unreachable in any frontend. ray-debugger.nvim detects this and recovers
+> the traceback from Ray's excepthook frame automatically:
+>
+> * the traceback goes to the **quickfix list**, and the cursor jumps to the
+>   failing line,
+> * the exception and the **locals of every traceback frame** are printed in
+>   the nvim-dap REPL,
+> * Ray's hook frame is selected, so REPL expressions can use
+>   `error = sys.exc_info()` (e.g. `error[1].args`).
+>
+> `:RayDebugPostMortem` shows this again later. If you prefer the native
+> behaviour, pin `debugpy<=1.8.5` on the cluster.
+
+### Ray Jobs and `working_dir`
+
+Ray Jobs (`ray job submit --working-dir .`) and tasks started with
+`runtime_env={"working_dir": ...}` run from an unpacked copy of your project
+on the cluster (`/tmp/ray/session_*/runtime_resources/working_dir_files/_ray_pkg_<hash>/`).
+Without help, the debugger would show those remote paths and breakpoints set
+in your local files would never match.
+
+The plugin reads the task's runtime env from the dashboard and, when it has a
+`working_dir`, maps it to your local project automatically (both directions:
+stack frames open your local files and local breakpoints hit on the
+cluster). The local root defaults to Neovim's cwd; override it with
+`attach.working_dir.local_root` (a path or `function(entry) ... end`).
+
+### Watch mode
+
+`:RayDebugWatch` polls the configured clusters in the background and notifies
+you whenever a task starts waiting for a debugger (`:RayDebugWatch off` to
+stop). Combine it with the statusline component below.
 
 ### Commands
 
@@ -161,6 +218,8 @@ The frozen task shows up in `:RayDebug` with its error type.
 | `:RayDebug` | List paused tasks across all configured clusters and attach |
 | `:RayDebugAttach <host:port \| worker-id \| task-id>` | Attach directly, without the picker |
 | `:RayDebugRefresh` | Refresh the cached list of paused tasks |
+| `:RayDebugWatch [on\|off]` | Toggle background polling with notifications for new paused tasks |
+| `:RayDebugPostMortem` | Show the recovered post-mortem traceback and locals again |
 | `:checkhealth ray-debugger` | Diagnose configuration, `curl`, nvim-dap, and cluster reachability |
 
 ### Lua API
@@ -173,6 +232,8 @@ ray_debugger.pick()                    -- pick and attach
 ray_debugger.refresh(function(err, entries, warnings) end)
 ray_debugger.attach(entry)             -- attach to a `paused()` entry
 ray_debugger.attach_address("10.0.0.5:12345")
+ray_debugger.watch(true)               -- start/stop background polling (toggle without args)
+ray_debugger.post_mortem()             -- (re)show the post-mortem traceback
 ray_debugger.paused_count()            -- number from the last refresh
 ray_debugger.status()                  -- statusline component, e.g. "⏸ 2"
 ```
@@ -234,11 +295,25 @@ require("ray-debugger").setup({
     -- user frame automatically instead of showing Ray internals.
     skip_internal_frames = true,
 
+    -- Map Ray Job / `working_dir` tasks back to the local project.
+    working_dir = {
+      enabled = true,
+      local_root = nil, -- default: Neovim's cwd; string or function(entry)
+    },
+
     -- Extra arguments merged into every DAP attach request.
     extra_args = {},
 
     -- How long to wait for debugpy to acknowledge a disconnect.
     disconnect_timeout_sec = 3,
+  },
+
+  -- Post-mortem traceback recovery (debugpy >= 1.8.6, see above).
+  post_mortem = {
+    enabled = true,
+    quickfix = true, -- traceback in the quickfix list
+    repl = true,     -- exception + locals in the nvim-dap REPL
+    jump = true,     -- jump to the failing line
   },
 })
 ```
@@ -278,7 +353,9 @@ Start with:
 | `no paused Ray tasks found` | the task has not reached `breakpoint()` yet, the worker already resumed, or the cluster uses `RAY_DEBUG=legacy` |
 | `HTTP 000`/connection errors | dashboard not reachable; check `dashboard_url` and tunnels |
 | Attach hangs | the debugger port is not reachable from your machine (see above) |
-| Stops in Ray internals | set `attach.just_my_code = false` (default) and check `path_mappings` |
+| Stops in Ray internals | `attach.skip_internal_frames` is on by default; check `path_mappings` for custom setups |
+| Frames show `/tmp/ray/.../_ray_pkg_...` paths | set `attach.working_dir.local_root` to your project if Neovim's cwd is elsewhere |
+| Post-mortem stops in `contextlib.py` | debugpy ≥ 1.8.6; the traceback is recovered into quickfix/REPL (`:RayDebugPostMortem`) |
 | Nothing happens on `breakpoint()` | `debugpy>=1.8` missing on the cluster |
 
 Notes:
@@ -301,15 +378,21 @@ Notes:
 ## Development
 
 ```bash
-# Unit tests + protocol tests (nvim-dap integration tests need a checkout)
-make test NVIM_DAP_PATH=/path/to/nvim-dap
+# Fetch nvim-dap into .deps/ (git-ignored) for the integration tests
+make deps
+
+# Unit tests + protocol tests
+make test
 
 # Adds a real debugpy end-to-end test (needs `pip install debugpy`)
 make test-integration NVIM_DAP_PATH=/path/to/nvim-dap
 
-# Full end-to-end test against a real Ray cluster
-# (needs `pip install "ray[default]" debugpy`)
+# Full end-to-end tests against a real Ray cluster
+# (needs `pip install "ray[default]" debugpy`): breakpoint, actor,
+# post-mortem and Ray Job (working_dir) scenarios
 make test-ray NVIM_DAP_PATH=/path/to/nvim-dap
+# or a subset:
+bash tests/integration/real_ray_cluster.sh job post-mortem
 ```
 
 The unit tests spin up mock Ray dashboards and a mock DAP server; the

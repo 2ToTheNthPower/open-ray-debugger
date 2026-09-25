@@ -80,7 +80,7 @@ end
 
 ---@return integer
 function M.now_ms()
-  return math.floor(vim.uv.hrtime() / 1e6)
+  return math.floor((vim.uv or vim.loop).hrtime() / 1e6)
 end
 
 return M

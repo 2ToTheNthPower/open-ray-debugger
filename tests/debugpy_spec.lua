@@ -130,4 +130,108 @@ describe("debugpy end-to-end", function()
       error(err)
     end
   end)
+
+  it("gives post-mortem access to the failing frame on any debugpy version", function()
+    dap.defaults.fallback.switchbuf = "never"
+    require("ray-debugger.config").setup({})
+    local post_mortem = require("ray-debugger.post_mortem")
+    post_mortem.last = nil
+    vim.fn.setqflist({}, "r")
+
+    local target = root .. "/tests/integration/ray_post_mortem_debuggee.py"
+    local raise_line
+    for index, line in ipairs(vim.fn.readfile(target)) do
+      if line:match("raise ValueError") then
+        raise_line = index
+      end
+    end
+
+    local stdout, stderr, port = {}, {}, nil
+    local job = vim.fn.jobstart({ python, target }, {
+      on_stdout = function(_, data)
+        for _, line in ipairs(data or {}) do
+          stdout[#stdout + 1] = line
+          port = port or tonumber(line:match("^PORT=(%d+)$"))
+        end
+      end,
+      on_stderr = function(_, data)
+        vim.list_extend(stderr, data or {})
+      end,
+    })
+
+    local notifications = {}
+    local real_notify = vim.notify
+    vim.notify = function(msg, level)
+      notifications[#notifications + 1] = msg
+      real_notify(msg, level)
+    end
+
+    local stopped
+    dap.listeners.after.event_stopped["ray-debugger-pm-test"] = function(session, body)
+      stopped = { session = session, body = body }
+    end
+
+    local ok, err = pcall(function()
+      wait_for(function()
+        return port ~= nil
+      end, 20000, "debuggee never reported its port: " .. table.concat(stderr, "\n"))
+      ray_dap.attach({ host = "127.0.0.1", port = port, label = "post-mortem target" })
+
+      wait_for(function()
+        return stopped ~= nil and stopped.session.current_frame ~= nil
+      end, 30000, "no stopped event")
+      assert_eq("exception", stopped.body.reason)
+
+      local native = stopped.session.current_frame.name == "explode"
+      if not native then
+        -- debugpy >= 1.8.6: the plugin recovers the traceback
+        wait_for(function()
+          return post_mortem.last ~= nil
+        end, 15000, "post-mortem traceback was not recovered")
+        local info = post_mortem.last.info
+        local frame = info.frames[post_mortem.last.user_index]
+        assert_eq("ValueError", info.type)
+        assert_eq("explode", frame.name)
+        assert_eq(raise_line, frame.line)
+        assert_eq("[1, 2]", frame.locals.values)
+        assert_eq("1", frame.locals.x)
+
+        local qf = vim.fn.getqflist({ title = 1, items = 1 })
+        assert_match("ValueError: boom", qf.title)
+
+        -- the REPL can now evaluate in Ray's hook frame, which holds `error`
+        local evaluated
+        stopped.session:evaluate(
+          { expression = "type(error[1]).__name__", context = "repl" },
+          function(e, r)
+            evaluated = { err = e, result = r and r.result }
+          end
+        )
+        wait_for(function()
+          return evaluated ~= nil
+        end, 10000)
+        assert_eq("'ValueError'", evaluated.result)
+      end
+
+      for _, msg in ipairs(notifications) do
+        assert_falsy(
+          msg:match("[Ee]rror getting exception info"),
+          "noisy exceptionInfo error: " .. msg
+        )
+      end
+
+      dap.continue()
+      wait_for(function()
+        return vim.tbl_contains(stdout, "DONE")
+      end, 20000, "debuggee did not finish")
+    end)
+
+    vim.notify = real_notify
+    pcall(dap.close)
+    pcall(vim.fn.jobstop, job)
+    dap.listeners.after.event_stopped["ray-debugger-pm-test"] = nil
+    if not ok then
+      error(err)
+    end
+  end)
 end)

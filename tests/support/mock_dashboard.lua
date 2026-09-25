@@ -114,10 +114,19 @@ function M.start(routes)
         end
       end
 
+      local headers = {}
+      for line in buffer:sub(1, header_end):gmatch("[^\r\n]+") do
+        local name, value = line:match("^([^:]+):%s*(.*)$")
+        if name then
+          headers[name:lower()] = value
+        end
+      end
+
       handle.requests[#handle.requests + 1] = {
         method = method,
         path = path,
         query = query,
+        headers = headers,
       }
 
       local handler = routes[path]

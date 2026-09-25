@@ -37,7 +37,7 @@ With lazy.nvim/LazyVim:
       "you/ray-debugger.nvim",
       dependencies = { "mfussenegger/nvim-dap" },
       keys = {
-        { "<leader>dr", function() require("ray-debugger").pick() end,
+        { "<leader>dR", function() require("ray-debugger").pick() end,
           desc = "Ray: Attach to paused task" },
       },
       opts = { dashboard_url = "http://127.0.0.1:8265" },
@@ -69,6 +69,14 @@ COMMANDS                                             *ray-debugger-commands*
 :RayDebugRefresh                                    *:RayDebugRefresh*
         Refresh the cached paused task list.
 
+:RayDebugWatch [on|off]                             *:RayDebugWatch*
+        Toggle background polling.  While watching, a notification is shown
+        whenever a task starts waiting for a debugger.
+
+:RayDebugPostMortem                                 *:RayDebugPostMortem*
+        Show the recovered post-mortem traceback (quickfix) and the failing
+        frame's locals (nvim-dap REPL) again.  See |ray-debugger-post-mortem|.
+
 :checkhealth ray-debugger                           *:checkhealth-ray-debugger*
         Diagnose `curl`, nvim-dap, the debugger mode, and cluster
         reachability.
@@ -96,9 +104,36 @@ attach.skip_internal_frames
                         boolean  When Ray's `breakpoint()` suspends a frame
                                  inside Ray/debugpy plumbing, select the first
                                  user frame.  Default: true
+attach.working_dir.enabled
+                        boolean  Map tasks that run from a `working_dir`
+                                 runtime env (every Ray Job) to the local
+                                 project.  Default: true
+attach.working_dir.local_root
+                        string|function
+                                 Local project root, or `fun(entry)`
+                                 returning it.  Default: Neovim's cwd
 attach.extra_args       table    Extra arguments for every attach request.
 attach.disconnect_timeout_sec
                         integer  Disconnect timeout.  Default: 3
+post_mortem.enabled     boolean  Recover post-mortem tracebacks.  Default: true
+post_mortem.quickfix    boolean  Traceback in the quickfix list.  Default: true
+post_mortem.repl        boolean  Exception and locals in the DAP REPL.
+                                 Default: true
+post_mortem.jump        boolean  Jump to the failing line.  Default: true
+
+==============================================================================
+POST-MORTEM                                     *ray-debugger-post-mortem*
+
+With `RAY_DEBUG_POST_MORTEM=1`, Ray freezes a failing task so a debugger can
+attach.  debugpy 1.8.0-1.8.5 then stops in the failing frame.  debugpy 1.8.6
+and newer report Ray's worker stack instead of the traceback and fail the
+`exceptionInfo` request, so the failing frame cannot be selected.
+
+The plugin detects this and evaluates a small expression in Ray's
+`_debugpy_excepthook` frame to recover the traceback: it fills the quickfix
+list, jumps to the failing line, prints the exception and the locals of every
+traceback frame in the nvim-dap REPL, and selects the hook frame so REPL
+expressions can use `error` (the `sys.exc_info()` tuple).
 
 ==============================================================================
 API                                                     *ray-debugger-api*
@@ -108,6 +143,8 @@ require("ray-debugger").pick()
 require("ray-debugger").refresh(function(err, entries, warnings) end)
 require("ray-debugger").attach(entry)
 require("ray-debugger").attach_address("host:port")
+require("ray-debugger").watch(enable?)  -- toggle background polling
+require("ray-debugger").post_mortem()   -- re-show post-mortem traceback
 require("ray-debugger").paused_count()
 require("ray-debugger").status()      -- statusline component, e.g. "⏸ 2"
 

@@ -181,6 +181,48 @@ function M.attach_address(arg)
   )
 end
 
+---Recover (or re-show) the post-mortem traceback of the current Ray session.
+---Runs automatically on exception stops; this is for re-showing it later.
+function M.post_mortem()
+  local post_mortem = require("ray-debugger.post_mortem")
+  local ok, dap_module = pcall(require, "dap")
+  local session = ok and dap_module.session() or nil
+  local thread = session
+    and session.stopped_thread_id
+    and session.threads[session.stopped_thread_id]
+  local hook_frame = thread and post_mortem.find_hook_frame(thread.frames)
+  if session and hook_frame then
+    return post_mortem.run(session, hook_frame)
+  end
+  if post_mortem.last and session then
+    return post_mortem.present(session, post_mortem.last.info, nil)
+  end
+  util.notify("no stopped Ray post-mortem session", vim.log.levels.INFO)
+end
+
+---Enable or disable background polling at runtime. While watching, new paused
+---tasks trigger a notification. Called without an argument it toggles.
+---@param enable? boolean
+---@return boolean watching
+function M.watch(enable)
+  local watching = M._poll_timer ~= nil
+  if enable == nil then
+    enable = not watching
+  end
+  if enable then
+    if (tonumber(config.options.poll_interval_ms) or 0) <= 0 then
+      config.options.poll_interval_ms = 2000
+    end
+    config.options.notify_on_new = true
+    M._restart_polling()
+    M.refresh()
+  else
+    config.options.poll_interval_ms = 0
+    M._restart_polling()
+  end
+  return M._poll_timer ~= nil
+end
+
 ---Number of paused tasks from the last refresh.
 ---@return integer
 function M.paused_count()

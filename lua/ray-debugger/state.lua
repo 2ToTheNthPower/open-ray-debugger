@@ -158,6 +158,25 @@ function M.pick_task(tasks)
   return newest(tasks)
 end
 
+---The `working_dir` URI of a task's runtime env (e.g. `gcs://_ray_pkg_<hash>.zip`).
+---@param task table|nil
+---@return string|nil
+function M.runtime_env_working_dir(task)
+  local info = task and task.runtime_env_info
+  if type(info) ~= "table" then
+    return nil
+  end
+  local serialized = info.serialized_runtime_env
+  if type(serialized) ~= "string" or serialized == "" then
+    return nil
+  end
+  local ok, env = pcall(vim.json.decode, serialized)
+  if not ok or type(env) ~= "table" then
+    return nil
+  end
+  return non_empty(env.working_dir)
+end
+
 ---Turn a paused worker (and its task, when known) into a picker entry.
 ---@param cluster RayDebuggerCluster
 ---@param worker table
@@ -178,7 +197,9 @@ function M.entry_from_worker(cluster, worker, task)
     error_type = task and non_empty(task.error_type) or nil,
     actor_id = task and non_empty(task.actor_id) or nil,
     job_id = task and non_empty(task.job_id) or nil,
-    is_debugger_paused = task and task.is_debugger_paused or nil,
+    -- JSON null decodes to vim.NIL (truthy), so compare explicitly.
+    is_debugger_paused = (task and task.is_debugger_paused == true) or nil,
+    working_dir = M.runtime_env_working_dir(task),
   }
   entry.label = util.entry_label(entry)
   return entry

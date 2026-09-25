@@ -110,6 +110,10 @@ function M.check()
     end
   end
 
+  health.info(
+    "post-mortem with debugpy >= 1.8.6 on the cluster: the failing frame is recovered into quickfix/REPL (see :help ray-debugger-post-mortem)"
+  )
+
   health.start("Usage notes")
   health.info("put `breakpoint()` in a Ray task or actor, then run your application")
   health.info(
