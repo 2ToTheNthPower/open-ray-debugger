@@ -1,7 +1,10 @@
 -- Tests for the nvim-dap adapter plumbing using a fake `dap` module.
 describe("dap module", function()
   local real_dap = package.loaded["dap"]
-  local fake_dap = { adapters = {} }
+  local fake_dap = {
+    adapters = {},
+    listeners = { before = {}, after = { event_stopped = {} } },
+  }
   fake_dap.run = function(cfg)
     fake_dap.ran = cfg
   end
@@ -14,6 +17,7 @@ describe("dap module", function()
     local dap = rdap.setup_adapter()
     assert_eq(fake_dap, dap)
     assert_eq("function", type(fake_dap.adapters.ray))
+    assert_eq("function", type(fake_dap.listeners.after.event_stopped["ray-debugger"]))
 
     local adapter
     fake_dap.adapters.ray(function(a)
@@ -57,6 +61,84 @@ describe("dap module", function()
     assert_match("no debugger port", err)
   end)
 
+  it("recognizes Ray and debugger internal frames", function()
+    assert_truthy(
+      rdap.is_internal_frame({ source = { path = "/venv/site-packages/ray/util/rpdb.py" } })
+    )
+    assert_truthy(
+      rdap.is_internal_frame({ source = { path = "/venv/site-packages/ray/util/debugpy.py" } })
+    )
+    assert_truthy(rdap.is_internal_frame({
+      source = {
+        path = "/venv/site-packages/debugpy/_vendored/pydevd/_pydevd_bundle/pydevd_comm.py",
+      },
+    }))
+    assert_falsy(rdap.is_internal_frame({ source = { path = "/home/me/app.py" } }))
+    assert_falsy(
+      rdap.is_internal_frame({ source = { path = "/venv/site-packages/ray/train/trainer.py" } })
+    )
+    assert_falsy(rdap.is_internal_frame(nil))
+  end)
+
+  ---Build a fake nvim-dap session with a small call stack.
+  local function fake_session(frames, config_type)
+    local session = {
+      config = { type = config_type or "ray" },
+      threads = { [1] = { frames = frames } },
+      current_frame = frames[1],
+      moves = 0,
+    }
+    session._frame_delta = function(self, delta)
+      for index, frame in ipairs(self.threads[1].frames) do
+        if frame.id == self.current_frame.id then
+          self.current_frame = self.threads[1].frames[index + delta] or self.current_frame
+          self.moves = self.moves + 1
+          return
+        end
+      end
+    end
+    return session
+  end
+
+  it("walks up to the user frame when Ray plumbing is on top", function()
+    local session = fake_session({
+      { id = 1, source = { path = "/venv/site-packages/ray/util/rpdb.py" } },
+      { id = 2, source = { path = "/venv/site-packages/ray/util/debugpy.py" } },
+      { id = 3, source = { path = "/home/me/app.py" } },
+      { id = 4, source = { path = "/venv/site-packages/ray/_private/worker.py" } },
+    })
+
+    rdap._on_stopped(session, { reason = "breakpoint", threadId = 1 })
+
+    assert_eq(3, session.current_frame.id)
+    assert_eq(2, session.moves)
+  end)
+
+  it("leaves step stops alone", function()
+    local session = fake_session({
+      { id = 1, source = { path = "/venv/site-packages/ray/util/rpdb.py" } },
+      { id = 2, source = { path = "/home/me/app.py" } },
+    })
+
+    rdap._on_stopped(session, { reason = "step", threadId = 1 })
+
+    assert_eq(1, session.current_frame.id)
+    assert_eq(0, session.moves)
+  end)
+
+  it("leaves sessions from other adapters alone", function()
+    local session = fake_session({
+      { id = 1, source = { path = "/venv/site-packages/ray/util/rpdb.py" } },
+      { id = 2, source = { path = "/home/me/app.py" } },
+    }, "python")
+
+    rdap._on_stopped(session, { reason = "breakpoint", threadId = 1 })
+
+    assert_eq(1, session.current_frame.id)
+    assert_eq(0, session.moves)
+  end)
+
+  -- Restore the environment for the specs that follow.
   package.loaded["dap"] = real_dap
   package.loaded["ray-debugger.dap"] = nil
 end)

@@ -39,18 +39,32 @@ local function decode(str)
 end
 
 ---Wrap a payload in Ray's REST envelope.
+---
+---Ray nests the list payload: `data.result.result` holds the rows while
+---`data.result` holds the `ListApiResponse` metadata.  Pass `{ flat = true }`
+---for the simplified shape some deployments use (`data.result` = rows).
 ---@param rows table[]
+---@param opts? { flat?: boolean }
 ---@return string
-function M.envelope(rows)
+function M.envelope(rows, opts)
+  rows = rows or {}
+  local data
+  if opts and opts.flat then
+    data = { result = rows, total = #rows }
+  else
+    data = {
+      result = {
+        result = rows,
+        total = #rows,
+        num_after_truncation = #rows,
+        num_filtered = #rows,
+      },
+    }
+  end
   return vim.json.encode({
     result = true,
     msg = "",
-    data = {
-      result = rows,
-      total = #rows,
-      num_after_truncation = #rows,
-      num_filtered = #rows,
-    },
+    data = data,
   })
 end
 

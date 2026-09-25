@@ -59,17 +59,32 @@ Relevant fields (`python/ray/util/state/common.py`):
 * `TaskState.is_debugger_paused` (detail column) — set by some Ray versions and
   used as a preference when several tasks share a worker.
 
-The response envelope is always:
+The response envelope is:
 
 ```json
-{ "result": true, "msg": "", "data": { "result": [ ... ], "total": 3 } }
+{
+  "result": true,
+  "msg": "",
+  "data": {
+    "result": {
+      "result": [ ...rows... ],
+      "total": 3,
+      "num_after_truncation": 3,
+      "num_filtered": 3
+    }
+  }
+}
 ```
+
+The rows live in `data.result.result`; `data.result` carries the
+`ListApiResponse` metadata.  (Some Ray versions and simplified deployments
+flatten this to `data.result` = rows, so the plugin accepts both shapes.)
 
 Example:
 
 ```bash
 curl -s 'http://127.0.0.1:8265/api/v0/workers?detail=1&limit=10000' |
-  python3 -c 'import json,sys; [print(w["worker_id"], w["ip"], w["debugger_port"], w["num_paused_threads"]) for w in json.load(sys.stdin)["data"]["result"] if w["num_paused_threads"]]'
+  python3 -c 'import json,sys; [print(w["worker_id"], w["ip"], w["debugger_port"], w["num_paused_threads"]) for w in json.load(sys.stdin)["data"]["result"]["result"] if w["num_paused_threads"]]'
 ```
 
 Version notes:
@@ -113,6 +128,13 @@ nvim-dap then performs the usual DAP handshake: `initialize` → `attach` →
 `configurationDone` → `stopped`/`continued`/... events. debugpy answers with
 the stopped frame, scopes, variables and supports live breakpoints, stepping,
 and expression evaluation like any local Python debug session.
+
+One Ray-specific detail: Ray's `breakpoint()` support suspends the frame of
+its own `set_trace` helper (`pydevd.settrace(stop_at_frame=...)` in
+`ray/util/debugpy.py`), so the first stop of a session can land in
+`ray/util/rpdb.py` rather than in the task. The plugin detects stops whose
+leading frames are Ray/debugpy plumbing and selects the first user frame
+automatically (`attach.skip_internal_frames`).
 
 ## References
 

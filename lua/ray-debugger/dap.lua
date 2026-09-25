@@ -11,6 +11,113 @@ local config = require("ray-debugger.config")
 ---Name of the nvim-dap adapter registered by this plugin.
 M.adapter_name = "ray"
 
+---Paths that belong to debugger/Ray plumbing rather than the user's code.
+---
+---Ray's `breakpoint()` support suspends the frame of its own `set_trace`
+---helper (`pydevd.settrace(stop_at_frame=...)`), so the first stop of a
+---debug session can land in `ray/util/rpdb.py` instead of the task. The
+---plugin walks up to the first user frame automatically.
+local INTERNAL_FRAME_PATTERNS = {
+  "/ray/util/rpdb%.py$",
+  "/ray/util/debugpy%.py$",
+  "/ray/_private/worker%.py$",
+  "/ray/_private/workers/default_worker%.py$",
+  "/_pydevd_bundle/",
+  "/_pydev_bundle/",
+  "/pydevd%.py$",
+  "/debugpy/",
+}
+
+---@param frame table|nil
+---@return boolean
+function M.is_internal_frame(frame)
+  local path = frame and frame.source and frame.source.path
+  if type(path) ~= "string" then
+    return false
+  end
+  path = path:gsub("\\", "/")
+  for _, pattern in ipairs(INTERNAL_FRAME_PATTERNS) do
+    if path:match(pattern) then
+      return true
+    end
+  end
+  return false
+end
+
+---Move one frame up the call stack on a specific session.
+---@param session table
+---@return boolean moved
+local function move_up(session)
+  if type(session._frame_delta) == "function" then
+    if pcall(session._frame_delta, session, 1) then
+      return true
+    end
+  end
+  local ok, dap = pcall(require, "dap")
+  if ok and dap.session() == session and type(dap.up) == "function" then
+    dap.up()
+    return true
+  end
+  return false
+end
+
+---Select the first user frame when a Ray task stops in Ray/debugger plumbing.
+---Only applies to sessions started by this plugin and to breakpoint stops, so
+---deliberate stepping into library code is not disturbed.
+---@param session table
+---@param body table|nil
+function M._on_stopped(session, body)
+  if config.options.attach.skip_internal_frames == false then
+    return
+  end
+  if not session.config or session.config.type ~= M.adapter_name then
+    return
+  end
+  if body and body.reason and body.reason ~= "breakpoint" then
+    return
+  end
+
+  local thread_id = body and body.threadId
+  local attempts = 0
+
+  local function attempt()
+    if session.closed then
+      return
+    end
+
+    local thread = thread_id and session.threads and session.threads[thread_id]
+    local frames = thread and thread.frames
+    if (not frames or #frames == 0) and attempts < 50 then
+      attempts = attempts + 1
+      vim.defer_fn(attempt, 20)
+      return
+    end
+    frames = frames or {}
+
+    local hops = 0
+    for _, frame in ipairs(frames) do
+      if M.is_internal_frame(frame) then
+        hops = hops + 1
+      else
+        break
+      end
+    end
+
+    for _ = 1, hops do
+      local before = session.current_frame and session.current_frame.id
+      if not move_up(session) then
+        return
+      end
+      local after = session.current_frame and session.current_frame.id
+      if after == nil or after == before then
+        return
+      end
+    end
+  end
+
+  attempt()
+end
+
 ---Register the adapter with nvim-dap. Idempotent.
 ---@return table|nil dap The nvim-dap module.
 ---@return string|nil err
@@ -43,6 +150,10 @@ function M.setup_adapter()
         },
       })
     end
+  end
+
+  if dap.listeners and dap.listeners.after and dap.listeners.after.event_stopped then
+    dap.listeners.after.event_stopped["ray-debugger"] = M._on_stopped
   end
 
   return dap

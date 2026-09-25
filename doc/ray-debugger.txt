@@ -92,6 +92,10 @@ picker                  function Custom picker: `fun(entries, on_choice)`.
 attach.just_my_code     boolean  Passed to debugpy.  Default: false
 attach.path_mappings    table    DAP `pathMappings`, e.g.
                                  `{ { localRoot = "/local", remoteRoot = "/remote" } }`
+attach.skip_internal_frames
+                        boolean  When Ray's `breakpoint()` suspends a frame
+                                 inside Ray/debugpy plumbing, select the first
+                                 user frame.  Default: true
 attach.extra_args       table    Extra arguments for every attach request.
 attach.disconnect_timeout_sec
                         integer  Disconnect timeout.  Default: 3

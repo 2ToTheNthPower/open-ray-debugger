@@ -123,6 +123,34 @@ describe("state discovery", function()
     assert_eq(4444, entries[1].port)
   end)
 
+  it("accepts the flat list shape from older dashboards", function()
+    local mock = dashboard.start({
+      ["/api/v0/workers"] = function()
+        return {
+          body = dashboard.envelope({
+            {
+              worker_id = "w1",
+              is_alive = true,
+              num_paused_threads = 1,
+              debugger_port = 3333,
+              ip = "127.0.0.1",
+            },
+          }, { flat = true }),
+        }
+      end,
+      ["/api/v0/tasks"] = function()
+        return { body = dashboard.envelope({}, { flat = true }) }
+      end,
+    })
+
+    local err, entries = run_paused({ { name = "test", url = mock.url } })
+    mock.stop()
+
+    assert_eq(nil, err)
+    assert_eq(1, #entries)
+    assert_eq(3333, entries[1].port)
+  end)
+
   it("prefers tasks that are explicitly paused by the debugger", function()
     local task = state.pick_task({
       { task_id = "running", state = "RUNNING", start_time_ms = 100 },

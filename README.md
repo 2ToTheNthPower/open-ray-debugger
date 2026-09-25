@@ -230,6 +230,10 @@ require("ray-debugger").setup({
       { localRoot = vim.fn.getcwd(), remoteRoot = "/home/ray/app" },
     },
 
+    -- Ray's breakpoint() suspends a helper frame first; jump to the first
+    -- user frame automatically instead of showing Ray internals.
+    skip_internal_frames = true,
+
     -- Extra arguments merged into every DAP attach request.
     extra_args = {},
 
@@ -302,11 +306,17 @@ make test NVIM_DAP_PATH=/path/to/nvim-dap
 
 # Adds a real debugpy end-to-end test (needs `pip install debugpy`)
 make test-integration NVIM_DAP_PATH=/path/to/nvim-dap
+
+# Full end-to-end test against a real Ray cluster
+# (needs `pip install "ray[default]" debugpy`)
+make test-ray NVIM_DAP_PATH=/path/to/nvim-dap
 ```
 
-The tests spin up mock Ray dashboards and a mock DAP server; the integration
-test runs a real debugpy debuggee that mimics a Ray worker. See
-[tests/](tests/) for details.
+The unit tests spin up mock Ray dashboards and a mock DAP server; the
+integration test runs a real debugpy debuggee that mimics a Ray worker; the
+`test-ray` target starts a real Ray head node, runs a task that pauses on
+`breakpoint()`, discovers it through the dashboard, attaches nvim-dap and
+continues it. See [tests/](tests/) for details.
 
 ## License
 

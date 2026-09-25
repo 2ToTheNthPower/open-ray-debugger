@@ -89,6 +89,32 @@ local function non_empty(value)
   return nil
 end
 
+---Extract the row list from a State API `data` payload.
+---
+---Ray's REST envelope is `{ result = true, msg = "", data = ... }` and the list
+---payload is nested: `data.result.result` holds the rows while `data.result`
+---holds the `ListApiResponse` metadata (`total`, `num_filtered`, ...).
+---Some Ray versions/simplified deployments return the rows directly in
+---`data.result`, so both shapes are accepted.
+---@param data table|nil
+---@return table[]
+function M.rows_from_data(data)
+  if type(data) ~= "table" then
+    return {}
+  end
+  local payload = data.result
+  if type(payload) ~= "table" then
+    return {}
+  end
+  if type(payload.result) == "table" then
+    return payload.result
+  end
+  if payload[1] ~= nil or next(payload) == nil then
+    return payload
+  end
+  return {}
+end
+
 ---Pick the most interesting task out of the tasks running on one worker.
 ---@param tasks table[]
 ---@return table|nil
@@ -173,7 +199,7 @@ function M.task_for_worker(cluster, worker, cb)
     if err then
       return cb(err)
     end
-    cb(nil, M.pick_task(data and data.result or {}))
+    cb(nil, M.pick_task(M.rows_from_data(data)))
   end)
 end
 
@@ -189,7 +215,7 @@ function M.paused_in_cluster(cluster, cb)
       return cb(err)
     end
 
-    local workers = (data and data.result) or {}
+    local workers = M.rows_from_data(data)
 
     -- `num_paused_threads` was added to worker state after the debugger
     -- itself; fall back to "has an open debugger port" on older clusters.

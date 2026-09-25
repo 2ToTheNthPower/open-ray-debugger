@@ -88,7 +88,7 @@ function M.check()
         "for remote clusters, forward the dashboard port (e.g. `kubectl port-forward`)",
       })
     else
-      local workers = (data and data.result) or {}
+      local workers = state.rows_from_data(data)
       local paused = 0
       for _, worker in ipairs(workers) do
         if worker.is_alive ~= false and (tonumber(worker.num_paused_threads) or 0) > 0 then

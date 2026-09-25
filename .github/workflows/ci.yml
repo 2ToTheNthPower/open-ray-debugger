@@ -37,3 +37,26 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: latest
           args: --check lua plugin tests
+
+  real-ray:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: v0.10.4
+
+      - name: Clone nvim-dap
+        run: git clone --depth=1 https://github.com/mfussenegger/nvim-dap.git /tmp/nvim-dap
+
+      - name: Install Ray and debugpy
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "ray[default]" debugpy
+
+      - name: End-to-end test against a real Ray cluster
+        run: make test-ray NVIM_DAP_PATH=/tmp/nvim-dap

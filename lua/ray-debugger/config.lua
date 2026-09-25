@@ -15,6 +15,8 @@ local M = {}
 ---@field just_my_code? boolean Passed to debugpy as `justMyCode`.
 ---@field path_mappings? table[] `pathMappings` entries (`{ localRoot, remoteRoot }`)
 ---  used to translate paths between the local machine and the cluster.
+---@field skip_internal_frames? boolean When Ray's `breakpoint()` suspends a
+---  frame inside Ray/debugpy plumbing, select the first user frame instead.
 ---@field extra_args? table Extra arguments merged into every DAP `attach` request.
 ---@field disconnect_timeout_sec? number How long to wait for the adapter to disconnect.
 
@@ -39,6 +41,7 @@ M.defaults = {
   attach = {
     just_my_code = false,
     path_mappings = nil,
+    skip_internal_frames = true,
     extra_args = {},
     disconnect_timeout_sec = 3,
   },

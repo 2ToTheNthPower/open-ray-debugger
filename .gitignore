@@ -1,4 +1,8 @@
-stylua.toml
+# Editor / OS noise
+*.swp
+.DS_Store
+
+# Test artifacts
 *.log
-.deps/
 tmp/
+.deps/

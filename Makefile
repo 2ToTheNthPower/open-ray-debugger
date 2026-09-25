@@ -15,5 +15,11 @@ test-integration:
 	RAY_DEBUGGER_DEBUGPY=1 RAY_DEBUGGER_PYTHON=$(PYTHON) NVIM_DAP_PATH=$(NVIM_DAP_PATH) \
 		$(NVIM) --clean -l tests/run.lua
 
+# End-to-end test against a real Ray cluster.
+# Requires `pip install "ray[default]" debugpy` and a nvim-dap checkout.
+test-ray:
+	NVIM=$(NVIM) PYTHON=$(PYTHON) NVIM_DAP_PATH=$(NVIM_DAP_PATH) \
+		bash tests/integration/real_ray_cluster.sh
+
 lint:
 	stylua --check lua plugin tests
