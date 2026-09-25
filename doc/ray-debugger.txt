@@ -34,8 +34,10 @@ With lazy.nvim/LazyVim:
 
 >lua
     {
-      "you/ray-debugger.nvim",
+      "2ToTheNthPower/open-ray-debugger",
       dependencies = { "mfussenegger/nvim-dap" },
+      cmd = { "RayDebug", "RayDebugAttach", "RayDebugPostMortem",
+              "RayDebugWatch", "RayDebugRefresh" },
       keys = {
         { "<leader>dR", function() require("ray-debugger").pick() end,
           desc = "Ray: Attach to paused task" },
@@ -43,6 +45,10 @@ With lazy.nvim/LazyVim:
       opts = { dashboard_url = "http://127.0.0.1:8265" },
     }
 <
+With `keys` or `cmd` set, lazy.nvim lazy-loads the plugin: `:Lazy` lists it
+as "Not Loaded" until a key or |:RayDebug| command is used.  Without `cmd`,
+the commands don't exist until a key is pressed.  Add `lazy = false` to load
+it at startup instead.
 
 ==============================================================================
 USAGE                                                   *ray-debugger-usage*

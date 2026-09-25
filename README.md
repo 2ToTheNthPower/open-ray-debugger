@@ -68,8 +68,11 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim) (LazyVim):
 -- lua/plugins/ray-debugger.lua
 return {
   {
-    "you/ray-debugger.nvim", -- or `dir = "/path/to/open-ray-debugger"` for a local checkout
+    "2ToTheNthPower/open-ray-debugger",
+    -- or `dir = "~/path/to/open-ray-debugger"` for a local checkout
     dependencies = { "mfussenegger/nvim-dap" },
+    -- Load on any :RayDebug* command, not only on the keys below.
+    cmd = { "RayDebug", "RayDebugAttach", "RayDebugPostMortem", "RayDebugWatch", "RayDebugRefresh" },
     -- Chosen to not clash with LazyVim's DAP keys (<leader>dr is "Toggle REPL").
     keys = {
       { "<leader>dR", function() require("ray-debugger").pick() end, desc = "Ray: Attach to paused task" },
@@ -82,19 +85,34 @@ return {
 }
 ```
 
+Setting `keys` or `cmd` makes lazy.nvim lazy-load the plugin, so `:Lazy` lists
+it under **Not Loaded** until you press one of the keys or run a `:RayDebug*`
+command. That is expected. Keep the `cmd` list, or the commands won't exist
+until you press a key. To load it at startup instead, add `lazy = false`. That's
+cheap, because the Lua modules are only required when a command first runs.
+
 If you have not enabled the LazyVim DAP extra yet:
 
 ```lua
 { import = "lazyvim.plugins.extras.dap.core" },
 ```
 
-Manual setup:
+With Neovim's built-in package loader (no plugin manager required):
+
+```bash
+git clone https://github.com/2ToTheNthPower/open-ray-debugger \
+  ~/.local/share/nvim/site/pack/plugins/start/open-ray-debugger
+```
+
+Then call `setup()` from your `init.lua`:
 
 ```lua
 require("ray-debugger").setup({
   dashboard_url = "http://127.0.0.1:8265",
 })
 ```
+
+See [doc/ray-debugger.txt](doc/ray-debugger.txt) for `:help ray-debugger`.
 
 ## Usage
 
