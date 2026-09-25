@@ -49,15 +49,16 @@ end
 ---@param session table
 ---@return boolean moved
 local function move_up(session)
+  -- nvim-dap's frame navigation indexes `current_frame` unconditionally.
+  if type(session.current_frame) ~= "table" then
+    return false
+  end
   if type(session._frame_delta) == "function" then
-    if pcall(session._frame_delta, session, 1) then
-      return true
-    end
+    return (pcall(session._frame_delta, session, 1))
   end
   local ok, dap = pcall(require, "dap")
   if ok and dap.session() == session and type(dap.up) == "function" then
-    dap.up()
-    return true
+    return (pcall(dap.up))
   end
   return false
 end
@@ -70,8 +71,30 @@ local function is_ray_session(session)
     and session.config.type == M.adapter_name
 end
 
+---Whether nvim-dap has finished loading the stack of the current stop.
+---
+---Until it has, `thread.frames` can still hold the stack of the previous stop
+---(nvim-dap only clears `current_frame` when the thread continues), so the
+---stack only counts once `current_frame` points into it.
+---@param session table
+---@param frames table[]|nil
+---@return boolean
+local function frames_ready(session, frames)
+  local current = session.current_frame
+  if type(frames) ~= "table" or type(current) ~= "table" then
+    return false
+  end
+  for _, frame in ipairs(frames) do
+    if frame.id == current.id then
+      return true
+    end
+  end
+  return false
+end
+
 ---Run `fn(frames)` once nvim-dap has fetched the stack of the stopped thread.
 ---nvim-dap requests `stackTrace` asynchronously after the `stopped` event.
+---Gives up silently if the stack does not arrive in time.
 ---@param session table
 ---@param thread_id integer|nil
 ---@param fn fun(frames: table[])
@@ -83,12 +106,12 @@ local function with_frames(session, thread_id, fn)
     end
     local thread = thread_id and session.threads and session.threads[thread_id]
     local frames = thread and thread.frames
-    if (not frames or #frames == 0) and attempts < 50 then
+    if frames_ready(session, frames) then
+      fn(frames)
+    elseif attempts < 150 then
       attempts = attempts + 1
       vim.defer_fn(attempt, 20)
-      return
     end
-    fn(frames or {})
   end
   attempt()
 end

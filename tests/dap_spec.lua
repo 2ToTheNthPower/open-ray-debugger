@@ -114,6 +114,49 @@ describe("dap module", function()
     assert_eq(2, session.moves)
   end)
 
+  it("waits for the new stack instead of using the previous stop's frames", function()
+    -- After a continue nvim-dap clears current_frame but keeps the old frames.
+    local session = fake_session({
+      { id = 1, source = { path = "/venv/site-packages/ray/util/rpdb.py" } },
+      { id = 2, source = { path = "/home/me/app.py" } },
+    })
+    session.current_frame = nil
+    local real_frame_delta = session._frame_delta
+    session._frame_delta = function(self, delta)
+      assert_truthy(self.current_frame, "moved frames before nvim-dap set current_frame")
+      return real_frame_delta(self, delta)
+    end
+
+    rdap._on_stopped(session, { reason = "breakpoint", threadId = 1 })
+    assert_eq(0, session.moves)
+
+    -- nvim-dap's stackTrace response arrives for the new stop.
+    session.threads[1].frames = {
+      { id = 10, source = { path = "/venv/site-packages/ray/util/rpdb.py" } },
+      { id = 11, source = { path = "/home/me/app.py" } },
+    }
+    session.current_frame = session.threads[1].frames[1]
+
+    assert_truthy(vim.wait(1000, function()
+      return session.moves == 1
+    end, 10))
+    assert_eq(11, session.current_frame.id)
+  end)
+
+  it("does not raise when nvim-dap refuses to move frames", function()
+    local session = fake_session({
+      { id = 1, source = { path = "/venv/site-packages/ray/util/rpdb.py" } },
+      { id = 2, source = { path = "/home/me/app.py" } },
+    })
+    session._frame_delta = function()
+      error("attempt to index field 'current_frame' (a nil value)")
+    end
+
+    rdap._on_stopped(session, { reason = "breakpoint", threadId = 1 })
+
+    assert_eq(1, session.current_frame.id)
+  end)
+
   it("leaves step stops alone", function()
     local session = fake_session({
       { id = 1, source = { path = "/venv/site-packages/ray/util/rpdb.py" } },
